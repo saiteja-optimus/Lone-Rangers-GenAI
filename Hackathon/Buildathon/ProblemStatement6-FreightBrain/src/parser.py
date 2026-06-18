@@ -252,6 +252,11 @@ def parse_all_files(data_dir: Optional[str] = None) -> pd.DataFrame:
     df = _fill_coordinates(df)
     df = _coerce_types(df)
     df = df[df["origin_city"].notna() & df["dest_city"].notna()].reset_index(drop=True)
+    # Compatibility aliases used by dashboard.py and agent.py
+    df["miles"] = df["distance_miles"]
+    df["gross_rate"] = df["rate_usd"]
+    df["equipment"] = df["equipment_type"]
+    df["pickup_date"] = df["pickup_start"]
     logger.info("Total loads parsed: %d", len(df))
     return df
 
@@ -322,4 +327,9 @@ def _synthetic_demo_data() -> pd.DataFrame:
             "requirements": "None",
         })
     df = pd.DataFrame(rows)
-    return _fill_coordinates(df)
+    df = _fill_coordinates(df)
+    df["miles"] = df["distance_miles"]
+    df["gross_rate"] = df["rate_usd"]
+    df["equipment"] = df["equipment_type"]
+    df["pickup_date"] = df["pickup_start"]
+    return df
