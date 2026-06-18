@@ -39,6 +39,9 @@ silver_df.select(
 
 print("Building gold.net_profit_loads ...")
 
+# Create gold schema if it doesn't exist
+spark.sql("CREATE SCHEMA IF NOT EXISTS freightbrain.gold")
+
 # Window specs for rankings
 w_profit_global = Window.orderBy(F.desc("net_profit"))
 w_rpm_global    = Window.orderBy(F.desc("net_rpm"))
@@ -262,7 +265,7 @@ print("=" * 60)
     .agg(
         F.round(F.avg("net_profit"), 2).alias("avg_net_profit"),
         F.round(F.avg("net_rpm"), 4).alias("avg_net_rpm"),
-        F.round(F.avg("gross_revenue_usd"), 2).alias("avg_gross"),
+        F.round(F.avg("rate_usd"), 2).alias("avg_gross"),
         F.count("*").alias("load_count"),
     )
     .orderBy(F.desc("avg_net_profit"))
