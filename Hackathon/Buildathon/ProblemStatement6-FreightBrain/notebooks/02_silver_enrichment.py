@@ -6,13 +6,14 @@
 # MAGIC pandas UDFs, writes `freightbrain.silver.enriched_loads`.
 
 # COMMAND ----------
+
 # Cell 1 — Setup: add src/ to sys.path, imports
 
 import sys
 import os
 
 # Allow imports from src/ whether running locally or on Databricks
-_repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..")) if "__file__" in dir() else "/Workspace/Repos/freightbrain"
+_repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..")) if "__file__" in dir() else "/Workspace/Users/tallurisaiteja143@gmail.com/Lone-Rangers-GenAI-repo/Hackathon/Buildathon/ProblemStatement6-FreightBrain"
 _src_path = os.path.join(_repo_root, "src")
 if _src_path not in sys.path:
     sys.path.insert(0, _src_path)
@@ -38,6 +39,7 @@ print("Setup complete. cost_model imported.")
 print(f"  FUEL_CPM={FUEL_CPM:.4f}  DRIVER_CPM={DRIVER_CPM}  MAX_REPO_PENALTY={MAX_REPO_PENALTY}")
 
 # COMMAND ----------
+
 # Cell 2 — Read freightbrain.bronze.loads Delta table
 
 bronze_df = spark.table("freightbrain.bronze.loads")
@@ -46,13 +48,16 @@ bronze_df.printSchema()
 bronze_df.show(5, truncate=False)
 
 # COMMAND ----------
+
 # Cell 3 — Register pandas UDFs for each cost component
+
+import pandas as pd
 
 # ------------------------------------------------------------------
 # Fuel cost  (loaded miles only)
 # ------------------------------------------------------------------
 @F.pandas_udf(DoubleType())
-def udf_fuel_cost(miles: "pd.Series") -> "pd.Series":
+def udf_fuel_cost(miles: pd.Series) -> pd.Series:
     return (miles * FUEL_CPM).round(2)
 
 
@@ -60,7 +65,7 @@ def udf_fuel_cost(miles: "pd.Series") -> "pd.Series":
 # Driver pay  (loaded miles)
 # ------------------------------------------------------------------
 @F.pandas_udf(DoubleType())
-def udf_driver_pay(miles: "pd.Series") -> "pd.Series":
+def udf_driver_pay(miles: pd.Series) -> pd.Series:
     return (miles * DRIVER_CPM).round(2)
 
 
@@ -68,7 +73,7 @@ def udf_driver_pay(miles: "pd.Series") -> "pd.Series":
 # Insurance  (loaded miles)
 # ------------------------------------------------------------------
 @F.pandas_udf(DoubleType())
-def udf_insurance(miles: "pd.Series") -> "pd.Series":
+def udf_insurance(miles: pd.Series) -> pd.Series:
     return (miles * INSURANCE_CPM).round(2)
 
 
@@ -76,7 +81,7 @@ def udf_insurance(miles: "pd.Series") -> "pd.Series":
 # Maintenance  (loaded miles)
 # ------------------------------------------------------------------
 @F.pandas_udf(DoubleType())
-def udf_maintenance(miles: "pd.Series") -> "pd.Series":
+def udf_maintenance(miles: pd.Series) -> pd.Series:
     return (miles * MAINTENANCE_CPM).round(2)
 
 
@@ -84,7 +89,7 @@ def udf_maintenance(miles: "pd.Series") -> "pd.Series":
 # Tolls  (loaded miles)
 # ------------------------------------------------------------------
 @F.pandas_udf(DoubleType())
-def udf_tolls(miles: "pd.Series") -> "pd.Series":
+def udf_tolls(miles: pd.Series) -> pd.Series:
     return (miles * TOLL_CPM).round(2)
 
 
@@ -92,7 +97,7 @@ def udf_tolls(miles: "pd.Series") -> "pd.Series":
 # Deadhead cost  (deadhead_miles = 0 if column absent)
 # ------------------------------------------------------------------
 @F.pandas_udf(DoubleType())
-def udf_deadhead_cost(deadhead_miles: "pd.Series") -> "pd.Series":
+def udf_deadhead_cost(deadhead_miles: pd.Series) -> pd.Series:
     # cost = deadhead_miles * (DEADHEAD_FUEL_CPM + DRIVER_CPM * 0.5)
     rate = DEADHEAD_FUEL_CPM + DRIVER_CPM * 0.5
     return (deadhead_miles.fillna(0.0) * rate).round(2)
@@ -102,7 +107,7 @@ def udf_deadhead_cost(deadhead_miles: "pd.Series") -> "pd.Series":
 # Equipment surcharge  (loaded miles * per-equipment CPM)
 # ------------------------------------------------------------------
 @F.pandas_udf(DoubleType())
-def udf_equipment_surcharge(miles: "pd.Series", equipment: "pd.Series") -> "pd.Series":
+def udf_equipment_surcharge(miles: pd.Series, equipment: pd.Series) -> pd.Series:
     surcharge_cpm = equipment.map(lambda e: EQUIPMENT_SURCHARGE.get(e, 0.0))
     return (miles * surcharge_cpm).round(2)
 
@@ -111,7 +116,7 @@ def udf_equipment_surcharge(miles: "pd.Series", equipment: "pd.Series") -> "pd.S
 # Repositioning penalty  (dest_mls default = 50)
 # ------------------------------------------------------------------
 @F.pandas_udf(DoubleType())
-def udf_repo_penalty(dest_mls: "pd.Series") -> "pd.Series":
+def udf_repo_penalty(dest_mls: pd.Series) -> pd.Series:
     filled = dest_mls.fillna(50.0)
     return (MAX_REPO_PENALTY * (1.0 - filled / 100.0)).round(2)
 
@@ -119,6 +124,7 @@ def udf_repo_penalty(dest_mls: "pd.Series") -> "pd.Series":
 print("All 8 pandas UDFs registered.")
 
 # COMMAND ----------
+
 # Cell 4 — Apply UDFs: create enriched_loads with all cost columns + net_profit + net_rpm
 
 # Ensure deadhead_miles column exists (default 0 if absent from bronze)
@@ -181,7 +187,11 @@ enriched_loads.printSchema()
 enriched_loads.show(5, truncate=False)
 
 # COMMAND ----------
+
 # Cell 5 — Write to freightbrain.silver.enriched_loads (overwrite mode)
+
+# Create silver schema if it doesn't exist
+spark.sql("CREATE SCHEMA IF NOT EXISTS freightbrain.silver")
 
 (
     enriched_loads
@@ -196,6 +206,7 @@ print("Written to freightbrain.silver.enriched_loads (overwrite).")
 spark.sql("SELECT COUNT(*) AS row_count FROM freightbrain.silver.enriched_loads").show()
 
 # COMMAND ----------
+
 # Cell 6 — Analytics: avg net_rpm by equipment_type + top 5 most profitable loads
 
 print("=== Average net_rpm by equipment_type ===")

@@ -34,9 +34,19 @@ print("Python path configured.")
 # CELL 2 — Load Gold-layer data from Delta tables (or fall back to sample data)
 # =============================================================================
 
+import sys
+import os
 import pandas as pd
 
-USE_DELTA = False  # set to True when running inside a live Databricks cluster
+# Fix sys.path to point to the correct repository location
+CORRECT_SRC_PATH = "/Workspace/Users/tallurisaiteja143@gmail.com/Lone-Rangers-GenAI-repo/Hackathon/Buildathon/ProblemStatement6-FreightBrain/src"
+if CORRECT_SRC_PATH not in sys.path:
+    sys.path.insert(0, CORRECT_SRC_PATH)
+
+# Install missing dependency required by agent module
+%pip install python-dotenv -q
+
+USE_DELTA = True  # set to True when running inside a live Databricks cluster
 
 if USE_DELTA:
     print("Loading from Delta tables …")
@@ -70,20 +80,30 @@ print(mls_df.dtypes)
 
 from agent import FreightBrainAgent  # noqa: E402
 
-# ANTHROPIC_API_KEY must be set in the environment or Databricks secrets
-api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+# NVIDIA_API_KEY for the FreightBrainAgent
+MANUAL_API_KEY = "S23DhHJFxJ_NvCWiU85J4NlXqoWd2I8_oOHTmFHUATUYlrWfW8iZkIGme5YvOYhU"  # NVIDIA API key for model NVIDIABuild-Autogen-95
+
+api_key = os.environ.get("NVIDIA_API_KEY") or MANUAL_API_KEY
 if not api_key:
     raise EnvironmentError(
-        "ANTHROPIC_API_KEY is not set. "
+        "NVIDIA_API_KEY is not set. "
         "Add it via Databricks → Compute → Environment variables, "
-        "or run: export ANTHROPIC_API_KEY=sk-ant-..."
+        "or set MANUAL_API_KEY in this cell (line 8)."
     )
 
-agent = FreightBrainAgent(loads_df=loads_df, mls_df=mls_df)
+# Set the API key in the environment for the agent module to use
+os.environ["NVIDIA_API_KEY"] = api_key
+
+# Initialize agent with API key
+agent = FreightBrainAgent(api_key=api_key)
+
+# Store dataframes for use in demos
+agent.loads_df = loads_df
+agent.mls_df = mls_df
 print("FreightBrainAgent initialised.")
 print(f"  Loads loaded      : {len(agent.loads_df):,}")
 print(f"  Markets loaded    : {len(agent.mls_df):,}")
-print(f"  Claude model      : claude-sonnet-4-6")
+print(f"  Model             : NVIDIABuild-Autogen-95")
 
 # COMMAND ----------
 
@@ -100,13 +120,47 @@ print(f"DEMO 1 — Load Recommendations for Driver in {DEMO_1_LOCATION}")
 print(f"         Equipment: {DEMO_1_EQUIPMENT}")
 print("=" * 70)
 
-demo1_result = agent.recommend_loads(
-    driver_location=DEMO_1_LOCATION,
-    equipment_type=DEMO_1_EQUIPMENT,
+# Parse location into city and state
+driver_city, driver_state = DEMO_1_LOCATION.split(", ")
+
+# Filter loads within reasonable deadhead radius from Memphis
+from math import radians, cos, sin, asin, sqrt
+
+def haversine_miles(lat1, lon1, lat2, lon2):
+    """Calculate distance in miles between two lat/lon points."""
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    c = 2 * asin(sqrt(a))
+    return 3959 * c  # Earth radius in miles
+
+# Memphis coordinates
+memphis_lat, memphis_lon = 35.1495, -90.0490
+deadhead_radius_miles = 100
+
+# Filter candidate loads
+candidate_loads = agent.loads_df[
+    (agent.loads_df['equipment_type'] == DEMO_1_EQUIPMENT) &
+    (agent.loads_df.apply(
+        lambda row: haversine_miles(memphis_lat, memphis_lon, row['origin_lat'], row['origin_lon']) <= deadhead_radius_miles,
+        axis=1
+    ))
+].copy()
+
+print(f"Found {len(candidate_loads)} candidate loads within {deadhead_radius_miles} miles")
+
+# Call the recommend method with correct parameters
+recommendation, full_text = agent.recommend(
+    driver_city=driver_city,
+    driver_state=driver_state,
+    equipment=DEMO_1_EQUIPMENT,
+    candidate_loads=candidate_loads,
+    mls_df=agent.mls_df,
 )
 
-print("\n--- Claude's Full Reasoning & Recommendation ---\n")
-print(demo1_result)
+print("\n--- Agent's Full Reasoning & Recommendation ---\n")
+print(full_text)
 
 # COMMAND ----------
 
@@ -124,22 +178,50 @@ print(f"         Equipment: {DEMO_2_EQUIPMENT}")
 print("=" * 70)
 
 # Show the market score for Laredo before the agent runs
-from agent import FreightBrainAgent  # already imported; re-import for clarity  # noqa: F811,E501
+laredo_market = agent.mls_df[
+    (agent.mls_df['city'].str.lower() == 'laredo') & 
+    (agent.mls_df['state'] == 'TX')
+]
 
-laredo_score = agent._get_market_score("Laredo", "TX")
-print(f"\nLaredo MLS Score : {laredo_score.get('mls_score', 'N/A')}")
-print(f"Rating           : {laredo_score.get('rating', 'N/A')}")
-print(f"Outbound count   : {laredo_score.get('outbound_count', 'N/A')}")
-print(f"Inbound count    : {laredo_score.get('inbound_count', 'N/A')}")
+if not laredo_market.empty:
+    laredo_row = laredo_market.iloc[0]
+    print(f"\nLaredo MLS Score : {laredo_row['mls_score']:.1f}")
+    print(f"Outbound count   : {laredo_row['outbound_count']}")
+    print(f"Inbound count    : {laredo_row['inbound_count']}")
+    print(f"Lane balance     : {laredo_row['lane_balance_ratio']:.2f}")
+else:
+    print("\nLaredo market not found in MLS data")
 print()
 
-demo2_result = agent.recommend_loads(
-    driver_location=DEMO_2_LOCATION,
-    equipment_type=DEMO_2_EQUIPMENT,
+# Parse location and filter loads
+driver_city, driver_state = DEMO_2_LOCATION.split(", ")
+
+# Laredo coordinates
+laredo_lat, laredo_lon = 27.5306, -99.4803
+deadhead_radius_miles = 100
+
+# Filter candidate loads
+candidate_loads = agent.loads_df[
+    (agent.loads_df['equipment_type'] == DEMO_2_EQUIPMENT) &
+    (agent.loads_df.apply(
+        lambda row: haversine_miles(laredo_lat, laredo_lon, row['origin_lat'], row['origin_lon']) <= deadhead_radius_miles,
+        axis=1
+    ))
+].copy()
+
+print(f"Found {len(candidate_loads)} candidate loads within {deadhead_radius_miles} miles")
+
+# Call the recommend method
+recommendation, full_text = agent.recommend(
+    driver_city=driver_city,
+    driver_state=driver_state,
+    equipment=DEMO_2_EQUIPMENT,
+    candidate_loads=candidate_loads,
+    mls_df=agent.mls_df,
 )
 
-print("\n--- Claude's Full Reasoning & Recommendation (Hard Mode) ---\n")
-print(demo2_result)
+print("\n--- Agent's Full Reasoning & Recommendation (Hard Mode) ---\n")
+print(full_text)
 
 # COMMAND ----------
 
@@ -151,10 +233,22 @@ print("=" * 70)
 print("TOP 10 CARRIER START MARKETS — Ranked by Market Liquidity Score (MLS)")
 print("=" * 70)
 
-top_markets_result = agent.rank_carrier_markets()
+# Generate market analysis from the MLS data
+top_10_markets = (
+    agent.mls_df
+    .sort_values('carrier_start_rank')
+    .head(10)
+    .reset_index(drop=True)
+)
 
-print("\n--- Claude's Market Analysis ---\n")
-print(top_markets_result)
+print("\n--- Top 10 Markets Analysis ---\n")
+for idx, row in top_10_markets.iterrows():
+    rank = idx + 1
+    print(f"{rank}. {row['city']}, {row['state']}")
+    print(f"   MLS Score: {row['mls_score']:.1f}")
+    print(f"   Outbound: {row['outbound_count']}, Inbound: {row['inbound_count']}")
+    print(f"   Lane Balance: {row['lane_balance_ratio']:.2f}, Avg RPM: ${row['avg_rpm']:.2f}")
+    print()
 
 # Also show the raw MLS table for reference
 print("\n--- Raw MLS Data (top 15, sorted by rank) ---")
@@ -193,18 +287,48 @@ markets_to_compare = [("Memphis", "TN"), ("Laredo", "TX")]
 
 comparison_rows = []
 for city, state in markets_to_compare:
-    score_data = agent._get_market_score(city, state)
-    comparison_rows.append({
-        "city"               : city,
-        "state"              : state,
-        "mls_score"          : score_data.get("mls_score"),
-        "rating"             : score_data.get("rating"),
-        "outbound_count"     : score_data.get("outbound_count"),
-        "inbound_count"      : score_data.get("inbound_count"),
-        "lane_balance_ratio" : score_data.get("lane_balance_ratio"),
-        "avg_rpm"            : score_data.get("avg_rpm"),
-        "dest_diversity"     : score_data.get("dest_diversity"),
-    })
+    # Look up market data from mls_df
+    market_data = agent.mls_df[
+        (agent.mls_df['city'].str.lower() == city.lower()) & 
+        (agent.mls_df['state'] == state)
+    ]
+    
+    if not market_data.empty:
+        row = market_data.iloc[0]
+        # Determine rating based on MLS score
+        mls = row['mls_score']
+        if mls >= 70:
+            rating = "Hot"
+        elif mls >= 50:
+            rating = "Good"
+        elif mls >= 30:
+            rating = "Fair"
+        else:
+            rating = "Dead"
+        
+        comparison_rows.append({
+            "city"               : city,
+            "state"              : state,
+            "mls_score"          : row['mls_score'],
+            "rating"             : rating,
+            "outbound_count"     : row['outbound_count'],
+            "inbound_count"      : row['inbound_count'],
+            "lane_balance_ratio" : row['lane_balance_ratio'],
+            "avg_rpm"            : row['avg_rpm'],
+            "dest_diversity"     : row['dest_diversity'],
+        })
+    else:
+        comparison_rows.append({
+            "city"               : city,
+            "state"              : state,
+            "mls_score"          : None,
+            "rating"             : "N/A",
+            "outbound_count"     : None,
+            "inbound_count"      : None,
+            "lane_balance_ratio" : None,
+            "avg_rpm"            : None,
+            "dest_diversity"     : None,
+        })
 
 comparison_df = pd.DataFrame(comparison_rows)
 
@@ -286,11 +410,13 @@ dead_zone_cols = [
     if c in dead_zones.columns
 ]
 
-if dead_zone_cols:
+if dead_zone_cols and len(dead_zones) > 0:
     try:
         display(dead_zones[dead_zone_cols])
     except NameError:
         print(dead_zones[dead_zone_cols].to_string(index=False))
+else:
+    print(f"No markets found with MLS < {dead_zone_threshold}. All markets in the dataset are above this threshold.")
 
 # How many sample loads drop drivers into dead zones?
 if "dest_city" in loads_df.columns and "dest_state" in loads_df.columns:

@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 # ── 1. Add project src/ to Python path ───────────────────────────────────────
 # Adjust REPO_ROOT to wherever the repo is mounted in your Databricks workspace.
 # On DBFS repos it is typically /Workspace/Repos/<user>/FreightBrain or similar.
-REPO_ROOT = "/Workspace/Repos/freightbrain"   # <-- update if different
+REPO_ROOT = "/Workspace/Users/tallurisaiteja143@gmail.com/Lone-Rangers-GenAI-repo/Hackathon/Buildathon/ProblemStatement6-FreightBrain"
 
 SRC_DIR = os.path.join(REPO_ROOT, "src")
 DATA_DIR = os.path.join(REPO_ROOT, "data", "text")
@@ -38,7 +38,7 @@ from parser import parse_all_files
 
 print("Parsing load files …")
 pdf = parse_all_files(DATA_DIR)
-print(f"Parsed {len(pdf):,} records from {pdf['source_file'].nunique()} files")
+print(f"Parsed {len(pdf):,} records")
 pdf.head(3)
 
 # COMMAND ----------
@@ -127,7 +127,7 @@ quality = (
         F.sum(F.when(F.col("origin_lat").isNull(), 1).otherwise(0)).alias("missing_origin_coords"),
         F.sum(F.when(F.col("dest_lat").isNull(), 1).otherwise(0)).alias("missing_dest_coords"),
         F.sum(F.when(F.col("weight_lbs").isNull(), 1).otherwise(0)).alias("missing_weight"),
-        F.countDistinct("source_file").alias("source_files_ingested"),
+
     )
 )
 
@@ -152,7 +152,7 @@ quality.display()
 
 # ── 10. Partition info ────────────────────────────────────────────────────────
 spark.sql(f"DESCRIBE DETAIL {TABLE}").select(
-    "name", "location", "numFiles", "sizeInBytes", "tableType"
+    "name", "location", "numFiles", "sizeInBytes", "format"
 ).display()
 
 print("Bronze ingestion complete.")
